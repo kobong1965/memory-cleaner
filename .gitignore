@@ -1,0 +1,22 @@
+# Local Python and Qt build dependencies
+.tools/
+.cache/
+
+# Generated packages and PyInstaller work directories
+build/
+dist/
+
+# Local verification images and machine-specific report
+verification/
+VERIFICATION.md
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

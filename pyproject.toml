@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-pilot"
+version = "0.2.3"
+description = "A lightweight Windows process monitor with safe one-click working-set trimming."
+requires-python = ">=3.11"
+dependencies = ["PySide6_Essentials==6.11.2"]
+license = { text = "MIT" }
+authors = [{ name = "Memory Pilot Contributors" }]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
