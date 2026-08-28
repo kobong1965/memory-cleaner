@@ -120,9 +120,63 @@ class ProcessListModel(QAbstractListModel):
             self._sort_key,
             self._descending,
         )
-        self.beginResetModel()
+        if visible == self._visible:
+            return
+
+        if not self._visible:
+            if visible:
+                self.beginInsertRows(QModelIndex(), 0, len(visible) - 1)
+                self._visible = visible
+                self.endInsertRows()
+            return
+
+        if not visible:
+            self.beginRemoveRows(QModelIndex(), 0, len(self._visible) - 1)
+            self._visible = ()
+            self.endRemoveRows()
+            return
+
+        rows = list(self._visible)
+        target_keys = {view.key for view in visible}
+
+        for index in range(len(rows) - 1, -1, -1):
+            if rows[index].key not in target_keys:
+                self.beginRemoveRows(QModelIndex(), index, index)
+                rows.pop(index)
+                self._visible = tuple(rows)
+                self.endRemoveRows()
+
+        for target_index, target_view in enumerate(visible):
+            current_index = next(
+                (index for index, row in enumerate(rows) if row.key == target_view.key),
+                None,
+            )
+            if current_index is None:
+                self.beginInsertRows(QModelIndex(), target_index, target_index)
+                rows.insert(target_index, target_view)
+                self._visible = tuple(rows)
+                self.endInsertRows()
+            elif current_index != target_index:
+                destination = target_index if current_index > target_index else target_index + 1
+                if not self.beginMoveRows(
+                    QModelIndex(),
+                    current_index,
+                    current_index,
+                    QModelIndex(),
+                    destination,
+                ):
+                    raise RuntimeError("无法增量更新进程列表顺序")
+                row = rows.pop(current_index)
+                rows.insert(target_index, row)
+                self._visible = tuple(rows)
+                self.endMoveRows()
+
         self._visible = visible
-        self.endResetModel()
+        self.dataChanged.emit(
+            self.index(0, 0),
+            self.index(len(visible) - 1, 0),
+            list(self.roleNames()),
+        )
 
 
 def _status_tone(status: ProcessStatus) -> str:
@@ -158,6 +212,7 @@ class DashboardController(QObject):
         self._future: concurrent.futures.Future[object] | None = None
         self._future_kind = ""
         self._last_snapshot: MonitorSnapshot | None = None
+        self._pending_release = False
         self._closed = False
 
         self._usage_text = "—%"
@@ -251,11 +306,14 @@ class DashboardController(QObject):
         if self._closed:
             return
         self._refresh_timer.stop()
-        if self._busy:
+        if self._future is not None:
             self._schedule_refresh()
             return
-        self._set_status("正在刷新进程占用…")
-        self._start_future("refresh", lambda: self.monitor.sample(self._grouped))
+        self._start_future(
+            "refresh",
+            lambda: self.monitor.sample(self._grouped),
+            visible_busy=False,
+        )
 
     @Slot(str)
     def setSearch(self, query: str) -> None:
@@ -279,7 +337,9 @@ class DashboardController(QObject):
 
     @Slot()
     def releaseMemory(self) -> None:
-        if self._busy:
+        if self._future is not None:
+            if self._future_kind == "refresh":
+                self._pending_release = True
             return
         if self._last_snapshot is None:
             self._set_status("等待进程列表首次刷新后再释放内存。")
@@ -287,7 +347,11 @@ class DashboardController(QObject):
         self._refresh_timer.stop()
         self._set_status("正在安全修剪用户进程的闲置工作集…")
         samples = self._last_snapshot.samples
-        self._start_future("release", lambda: self.release_service.release(samples))
+        self._start_future(
+            "release",
+            lambda: self.release_service.release(samples),
+            visible_busy=True,
+        )
 
     @Slot()
     def dismissNotice(self) -> None:
@@ -305,8 +369,15 @@ class DashboardController(QObject):
         self._poll_timer.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
-    def _start_future(self, kind: str, operation: Callable[[], object]) -> None:
-        self._set_busy(True)
+    def _start_future(
+        self,
+        kind: str,
+        operation: Callable[[], object],
+        *,
+        visible_busy: bool,
+    ) -> None:
+        if visible_busy:
+            self._set_busy(True)
         self._future_kind = kind
         self._future = self._executor.submit(operation)
         self._poll_timer.start()
@@ -320,7 +391,8 @@ class DashboardController(QObject):
         kind = self._future_kind
         self._future = None
         self._future_kind = ""
-        self._set_busy(False)
+        if kind == "release":
+            self._set_busy(False)
         try:
             result = future.result()
         except Exception as exc:
@@ -331,6 +403,9 @@ class DashboardController(QObject):
 
         if kind == "refresh":
             self._finish_refresh(result)
+            if self._pending_release:
+                self._pending_release = False
+                QTimer.singleShot(0, self.releaseMemory)
         elif kind == "release":
             self._finish_release(result)
 
@@ -427,6 +502,7 @@ class MiniController(QObject):
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-mini-qt")
         self._future: concurrent.futures.Future[object] | None = None
         self._future_kind = ""
+        self._pending_release = False
         self._closed = False
         self._usage_text = "—%"
         self._usage_percent = 0.0
@@ -467,18 +543,26 @@ class MiniController(QObject):
         if self._closed:
             return
         self._refresh_timer.stop()
-        if self._busy:
+        if self._future is not None:
+            self._schedule_refresh()
             return
-        self._set_status("正在刷新")
-        self._start_future("refresh", self.api.get_memory_snapshot)
+        self._start_future(
+            "refresh",
+            self.api.get_memory_snapshot,
+            visible_busy=False,
+        )
 
     @Slot()
     def releaseMemory(self) -> None:
-        if self._busy or self._closed:
+        if self._closed:
+            return
+        if self._future is not None:
+            if self._future_kind == "refresh":
+                self._pending_release = True
             return
         self._refresh_timer.stop()
         self._set_status("正在安全释放…")
-        self._start_future("release", self._release)
+        self._start_future("release", self._release, visible_busy=True)
 
     def _release(self) -> MemoryReleaseResult:
         snapshot = self.monitor.sample(grouped=False)
@@ -513,8 +597,15 @@ class MiniController(QObject):
         self._poll_timer.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
-    def _start_future(self, kind: str, operation: Callable[[], object]) -> None:
-        self._set_busy(True)
+    def _start_future(
+        self,
+        kind: str,
+        operation: Callable[[], object],
+        *,
+        visible_busy: bool,
+    ) -> None:
+        if visible_busy:
+            self._set_busy(True)
         self._future_kind = kind
         self._future = self._executor.submit(operation)
         self._poll_timer.start()
@@ -528,7 +619,8 @@ class MiniController(QObject):
         kind = self._future_kind
         self._future = None
         self._future_kind = ""
-        self._set_busy(False)
+        if kind == "release":
+            self._set_busy(False)
         try:
             result = future.result()
         except Exception as exc:
@@ -538,6 +630,9 @@ class MiniController(QObject):
         if kind == "refresh" and isinstance(result, MemorySnapshot):
             self._apply_memory(result)
             self._set_status("实时监测中")
+            if self._pending_release:
+                self._pending_release = False
+                QTimer.singleShot(0, self.releaseMemory)
         elif kind == "release" and isinstance(result, MemoryReleaseResult):
             self._apply_memory(result.after)
             self._set_status(f"已释放 {result.released_mb:,} MB")

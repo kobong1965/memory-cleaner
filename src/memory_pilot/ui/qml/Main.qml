@@ -183,7 +183,7 @@ ApplicationWindow {
 
                 Text {
                     Layout.topMargin: 14
-                    text: "Memory Pilot  0.2.3"
+                    text: "Memory Pilot  0.2.4"
                     color: "#526681"
                     font.family: "Segoe UI Variable Text"
                     font.pixelSize: 9
@@ -401,7 +401,7 @@ ApplicationWindow {
 
                             ActionButton {
                                 Layout.preferredWidth: 98
-                                text: controller.busy ? "刷新中" : "刷新"
+                                text: controller.busy ? "处理中" : "刷新"
                                 tone: "secondary"
                                 onClicked: controller.refresh()
                                 Accessible.name: "立即刷新进程列表"

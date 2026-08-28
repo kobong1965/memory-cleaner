@@ -69,3 +69,8 @@
   - Acceptance: The dashboard and mini widget use QML vector rendering with a purpose-built design system; monitoring, grouping, search, sorting, safe release, keyboard shortcuts, drag/menu behavior, and single-instance protection remain functional; no Tkinter runtime path remains.
   - Verify: QML source smoke tests load both roots with live data; 25 automated tests run with one opt-in skip; both packaged EXEs launch through the preserved desktop shortcuts; native style probes and final screenshots pass.
   - Files: `src/memory_pilot/ui/qt_bridge.py`, `src/memory_pilot/ui/qt_runtime.py`, `src/memory_pilot/ui/qml/`, `packaging/MemoryPilot.spec`, `packaging/MemoryPilotMini.spec`, `README.md`, `VERIFICATION.md`
+
+- [x] Task 15: Make automatic monitoring refresh visually silent
+  - Acceptance: The two-second background sample never enters the cleanup busy state; changed rows update in place while reorder, insertion, and removal use incremental model signals without resetting the entire process model.
+  - Verify: Model signal tests prove value, reorder, insertion, and removal refreshes emit no model reset; live controller probes show zero busy-state transitions across repeated automatic refreshes.
+  - Files: `src/memory_pilot/ui/qt_bridge.py`, `src/memory_pilot/ui/qml/Main.qml`, `tests/test_qt_bridge.py`, `SPEC.md`, `VERIFICATION.md`
