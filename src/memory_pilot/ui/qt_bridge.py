@@ -18,9 +18,19 @@ from PySide6.QtCore import (
     Slot,
 )
 
+from memory_pilot.core.deep_clean import AppUsageTracker, DeepCleanService
 from memory_pilot.core.memory_release import MemoryReleaseService
 from memory_pilot.core.process_monitor import MonitorSnapshot, ProcessMonitor, filter_and_sort_views
-from memory_pilot.models import BYTES_PER_MIB, MemoryReleaseResult, MemorySnapshot, ProcessStatus, ProcessView
+from memory_pilot.core.settings import SettingsStore
+from memory_pilot.models import (
+    BYTES_PER_MIB,
+    DeepCleanPlan,
+    DeepCleanResult,
+    MemoryReleaseResult,
+    MemorySnapshot,
+    ProcessStatus,
+    ProcessView,
+)
 from memory_pilot.platform.windows_api import WindowsApi
 
 REFRESH_INTERVAL_MS = 2_000
@@ -492,6 +502,7 @@ class MiniController(QObject):
     availableTextChanged = Signal()
     statusTextChanged = Signal()
     busyChanged = Signal()
+    deepCleanStateChanged = Signal()
     quitRequested = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -499,16 +510,25 @@ class MiniController(QObject):
         self.api = WindowsApi()
         self.monitor = ProcessMonitor(self.api)
         self.release_service = MemoryReleaseService(self.api)
+        self.deep_clean_service = DeepCleanService(self.api)
+        self.usage_tracker = AppUsageTracker()
+        self.settings_store = SettingsStore()
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-mini-qt")
         self._future: concurrent.futures.Future[object] | None = None
         self._future_kind = ""
         self._pending_release = False
+        self._pending_deep_preview = False
+        self._deep_clean_plan: DeepCleanPlan | None = None
         self._closed = False
         self._usage_text = "—%"
         self._usage_percent = 0.0
         self._available_text = "正在读取"
         self._status_text = "正在连接系统状态"
         self._busy = False
+        self._deep_clean_minutes = self.settings_store.load_deep_clean_minutes()
+        self._deep_clean_preview_text = "正在记录程序使用时间"
+        self._deep_clean_candidate_names = "启动前的使用历史不会被猜测"
+        self._deep_clean_preview_busy = False
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(40)
@@ -517,6 +537,11 @@ class MiniController(QObject):
         self._refresh_timer.setInterval(REFRESH_INTERVAL_MS)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self.refresh)
+        self._usage_timer = QTimer(self)
+        self._usage_timer.setInterval(1_000)
+        self._usage_timer.timeout.connect(self._observe_app_usage)
+        self._usage_timer.start()
+        QTimer.singleShot(0, self._observe_app_usage)
 
     @Property(str, notify=usageTextChanged)
     def usageText(self) -> str:
@@ -538,6 +563,33 @@ class MiniController(QObject):
     def busy(self) -> bool:
         return self._busy
 
+    @Property(int, notify=deepCleanStateChanged)
+    def deepCleanMinutes(self) -> int:
+        return self._deep_clean_minutes
+
+    @Property(str, notify=deepCleanStateChanged)
+    def deepCleanPreviewText(self) -> str:
+        return self._deep_clean_preview_text
+
+    @Property(str, notify=deepCleanStateChanged)
+    def deepCleanCandidateNames(self) -> str:
+        return self._deep_clean_candidate_names
+
+    @Property(bool, notify=deepCleanStateChanged)
+    def deepCleanPreviewBusy(self) -> bool:
+        return self._deep_clean_preview_busy
+
+    @Property(bool, notify=deepCleanStateChanged)
+    def deepCleanCanRun(self) -> bool:
+        plan = self._deep_clean_plan
+        return bool(
+            plan is not None
+            and plan.threshold_minutes == self._deep_clean_minutes
+            and plan.candidates
+            and not self._deep_clean_preview_busy
+            and self._future is None
+        )
+
     @Slot()
     def refresh(self) -> None:
         if self._closed:
@@ -557,7 +609,7 @@ class MiniController(QObject):
         if self._closed:
             return
         if self._future is not None:
-            if self._future_kind == "refresh":
+            if self._future_kind in {"refresh", "deep_preview"}:
                 self._pending_release = True
             return
         self._refresh_timer.stop()
@@ -567,6 +619,60 @@ class MiniController(QObject):
     def _release(self) -> MemoryReleaseResult:
         snapshot = self.monitor.sample(grouped=False)
         return self.release_service.release(snapshot.samples)
+
+    @Slot(int)
+    def setDeepCleanMinutes(self, minutes: int) -> None:
+        value = self.settings_store.save_deep_clean_minutes(minutes)
+        if value == self._deep_clean_minutes:
+            return
+        self._deep_clean_minutes = value
+        self._deep_clean_plan = None
+        self._deep_clean_preview_text = "时间已更新，正在重新检查…"
+        self._deep_clean_candidate_names = ""
+        self.deepCleanStateChanged.emit()
+
+    @Slot()
+    def prepareDeepClean(self) -> None:
+        if self._closed:
+            return
+        self._deep_clean_preview_busy = True
+        self._deep_clean_preview_text = "正在检查可安全关闭的程序…"
+        self._deep_clean_candidate_names = ""
+        self.deepCleanStateChanged.emit()
+        if self._future is not None:
+            self._pending_deep_preview = True
+            return
+        self._refresh_timer.stop()
+        minutes = self._deep_clean_minutes
+        self._start_future(
+            "deep_preview",
+            lambda: self._prepare_deep_clean(minutes),
+            visible_busy=False,
+        )
+
+    def _prepare_deep_clean(self, minutes: int) -> DeepCleanPlan:
+        snapshot = self.monitor.sample(grouped=False)
+        return self.deep_clean_service.preview(snapshot.samples, self.usage_tracker, minutes)
+
+    @Slot()
+    def runDeepClean(self) -> None:
+        if self._closed or self._future is not None:
+            return
+        plan = self._deep_clean_plan
+        if plan is None or plan.threshold_minutes != self._deep_clean_minutes:
+            self.prepareDeepClean()
+            return
+        self._refresh_timer.stop()
+        self._set_status("正在发送正常关闭请求…")
+        self._start_future(
+            "deep_clean",
+            lambda: self._run_deep_clean(plan),
+            visible_busy=True,
+        )
+
+    def _run_deep_clean(self, plan: DeepCleanPlan) -> DeepCleanResult:
+        snapshot = self.monitor.sample(grouped=False)
+        return self.deep_clean_service.execute(plan, snapshot.samples, self.usage_tracker)
 
     @Slot()
     def openFullApp(self) -> None:
@@ -594,6 +700,7 @@ class MiniController(QObject):
             return
         self._closed = True
         self._refresh_timer.stop()
+        self._usage_timer.stop()
         self._poll_timer.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
@@ -608,6 +715,7 @@ class MiniController(QObject):
             self._set_busy(True)
         self._future_kind = kind
         self._future = self._executor.submit(operation)
+        self.deepCleanStateChanged.emit()
         self._poll_timer.start()
 
     @Slot()
@@ -619,24 +727,83 @@ class MiniController(QObject):
         kind = self._future_kind
         self._future = None
         self._future_kind = ""
-        if kind == "release":
+        self.deepCleanStateChanged.emit()
+        if kind in {"release", "deep_clean"}:
             self._set_busy(False)
         try:
             result = future.result()
         except Exception as exc:
             self._set_status(f"操作失败：{exc}")
+            if kind == "deep_preview":
+                self._deep_clean_preview_busy = False
+                self._deep_clean_preview_text = "检查失败，请稍后重试"
+                self._deep_clean_candidate_names = str(exc)
+                self.deepCleanStateChanged.emit()
+            self._dispatch_pending_operation()
             self._schedule_refresh()
             return
         if kind == "refresh" and isinstance(result, MemorySnapshot):
             self._apply_memory(result)
             self._set_status("实时监测中")
-            if self._pending_release:
-                self._pending_release = False
-                QTimer.singleShot(0, self.releaseMemory)
         elif kind == "release" and isinstance(result, MemoryReleaseResult):
             self._apply_memory(result.after)
             self._set_status(f"已释放 {result.released_mb:,} MB")
+        elif kind == "deep_preview" and isinstance(result, DeepCleanPlan):
+            self._finish_deep_preview(result)
+            if result.threshold_minutes != self._deep_clean_minutes:
+                self._pending_deep_preview = True
+        elif kind == "deep_clean" and isinstance(result, DeepCleanResult):
+            self._finish_deep_clean(result)
+        self._dispatch_pending_operation()
         self._schedule_refresh()
+
+    def _finish_deep_preview(self, plan: DeepCleanPlan) -> None:
+        self._deep_clean_preview_busy = False
+        if plan.threshold_minutes != self._deep_clean_minutes:
+            self._deep_clean_plan = None
+            self.deepCleanStateChanged.emit()
+            return
+        self._deep_clean_plan = plan
+        count = len(plan.candidates)
+        if count:
+            if plan.threshold_minutes == 0:
+                self._deep_clean_preview_text = f"将请求关闭 {count} 个当前未使用的程序"
+            else:
+                self._deep_clean_preview_text = (
+                    f"将请求关闭 {count} 个超过 {plan.threshold_minutes} 分钟未使用的程序"
+                )
+            names = list(plan.candidate_names[:4])
+            self._deep_clean_candidate_names = "、".join(names)
+            if count > len(names):
+                self._deep_clean_candidate_names += f" 等 {count} 个"
+        else:
+            self._deep_clean_preview_text = "当前没有符合条件的普通桌面程序"
+            self._deep_clean_candidate_names = "系统、后台服务和当前前台程序已自动跳过"
+        self.deepCleanStateChanged.emit()
+
+    def _finish_deep_clean(self, result: DeepCleanResult) -> None:
+        self._deep_clean_plan = None
+        self._deep_clean_preview_busy = False
+        parts = [f"已向 {result.requested_count} 个程序发送关闭请求"]
+        if result.skipped_count:
+            parts.append(f"复核跳过 {result.skipped_count} 个")
+        if result.failed_count:
+            parts.append(f"失败 {result.failed_count} 个")
+        summary = " · ".join(parts)
+        self._deep_clean_preview_text = summary
+        self._deep_clean_candidate_names = "目标程序仍可提示保存或取消关闭"
+        self._set_status(f"深度清理：请求 {result.requested_count} 个")
+        self.deepCleanStateChanged.emit()
+
+    def _dispatch_pending_operation(self) -> None:
+        if self._future is not None or self._closed:
+            return
+        if self._pending_release:
+            self._pending_release = False
+            QTimer.singleShot(0, self.releaseMemory)
+        elif self._pending_deep_preview:
+            self._pending_deep_preview = False
+            QTimer.singleShot(0, self.prepareDeepClean)
 
     def _apply_memory(self, memory: MemorySnapshot) -> None:
         percent = clamp_percent(memory.used_percent)
@@ -660,6 +827,15 @@ class MiniController(QObject):
         if self._busy != busy:
             self._busy = busy
             self.busyChanged.emit()
+
+    @Slot()
+    def _observe_app_usage(self) -> None:
+        if self._closed:
+            return
+        try:
+            self.deep_clean_service.observe_usage(self.usage_tracker)
+        except (OSError, RuntimeError):
+            pass
 
     def _schedule_refresh(self) -> None:
         if not self._closed:

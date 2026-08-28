@@ -183,7 +183,7 @@ ApplicationWindow {
 
                 Text {
                     Layout.topMargin: 14
-                    text: "Memory Pilot  0.2.4"
+                    text: "Memory Pilot  0.2.5"
                     color: "#526681"
                     font.family: "Segoe UI Variable Text"
                     font.pixelSize: 9

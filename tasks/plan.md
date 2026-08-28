@@ -64,6 +64,24 @@ The UI owns presentation state only. Core services use immutable models and depe
 - PyInstaller work/cache: `E:\软件工作盘\MemoryPilot\build`
 - Final artifact: `E:\软件工作盘\MemoryPilot\dist`
 
+## Deep Clean Extension
+
+1. Extend the ctypes boundary with read-only foreground/top-level-window discovery and non-forcing `WM_CLOSE` posting.
+2. Add a monotonic foreground-usage tracker, protected candidate planner, execution-time revalidation, and truthful close-request results.
+3. Persist only the 0–60 minute setting in local app data; never persist or infer stale usage history across app downtime.
+4. Add an accessible compact QML confirmation panel and a “深度清理” button in the requested mini-widget gap without increasing the window size.
+5. Unit-test all eligibility and revalidation boundaries; use only a controlled disposable test window for any live close verification.
+6. Bump the patch version, rebuild both installed EXEs in place, preserve both desktop shortcuts, and leave GitHub unchanged unless separately requested.
+
+### Deep Clean Risks
+
+- **Unsaved work:** use `WM_CLOSE` only so the target application can prompt to save or cancel; never force termination.
+- **Unknown pre-launch history:** initialize every visible app at launch time and make it wait for the selected threshold.
+- **Race after preview:** re-read foreground state and last-use timestamps immediately before posting each close request.
+- **Closing background services:** require a normal visible top-level app window and existing `USER_APP` classification.
+- **Zero-minute scope:** show candidate count/names and require a second explicit confirmation.
+- **Stale PID reuse:** retain only currently visible PIDs and rebuild candidates from a fresh process/window snapshot.
+
 ## Mini Widget Extension
 
 1. Add testable work-area positioning helpers and Windows tool-window style handling.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memory-pilot"
-version = "0.2.4"
+version = "0.2.5"
 description = "A lightweight Windows process monitor with safe one-click working-set trimming."
 requires-python = ">=3.11"
 dependencies = ["PySide6_Essentials==6.11.2"]

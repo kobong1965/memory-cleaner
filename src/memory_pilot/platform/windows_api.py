@@ -6,7 +6,7 @@ import time
 from ctypes import wintypes
 from typing import Iterator
 
-from memory_pilot.models import MemorySnapshot, ProcessSample
+from memory_pilot.models import AppWindowInfo, MemorySnapshot, ProcessSample
 
 if os.name != "nt":
     raise RuntimeError("Memory Pilot only supports Windows.")
@@ -24,9 +24,14 @@ MAX_PATH_BUFFER = 32_768
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 SYSTEM_PROCESS_INFORMATION_CLASS = 5
 STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+GWL_EXSTYLE = -20
+GW_OWNER = 4
+WS_EX_TOOLWINDOW = 0x00000080
+WM_CLOSE = 0x0010
 
 SIZE_T = ctypes.c_size_t
 ULONG_PTR = wintypes.WPARAM
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 
 class PROCESSENTRY32W(ctypes.Structure):
@@ -129,6 +134,7 @@ class WindowsApi:
         self._psapi = ctypes.WinDLL("psapi", use_last_error=True)
         self._advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
         self._ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+        self._user32 = ctypes.WinDLL("user32", use_last_error=True)
         self._path_cache: dict[int, str] = {}
         self._configure_signatures()
 
@@ -191,6 +197,32 @@ class WindowsApi:
             ctypes.POINTER(wintypes.ULONG),
         ]
         self._ntdll.NtQuerySystemInformation.restype = wintypes.LONG
+        self._user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
+        self._user32.EnumWindows.restype = wintypes.BOOL
+        self._user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        self._user32.IsWindowVisible.restype = wintypes.BOOL
+        self._user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        self._user32.GetWindow.restype = wintypes.HWND
+        self._user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        self._user32.GetWindowLongW.restype = wintypes.LONG
+        self._user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        self._user32.GetWindowTextLengthW.restype = ctypes.c_int
+        self._user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        self._user32.GetWindowTextW.restype = ctypes.c_int
+        self._user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self._user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        self._user32.GetForegroundWindow.argtypes = []
+        self._user32.GetForegroundWindow.restype = wintypes.HWND
+        self._user32.PostMessageW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        self._user32.PostMessageW.restype = wintypes.BOOL
 
     def get_memory_snapshot(self) -> MemorySnapshot:
         status = MEMORYSTATUSEX()
@@ -364,6 +396,57 @@ class WindowsApi:
                 raise WindowsApiError(f"修剪进程 {pid} 工作集")
         finally:
             self._kernel32.CloseHandle(handle)
+
+    def get_visible_app_windows(self) -> tuple[AppWindowInfo, ...]:
+        windows: list[AppWindowInfo] = []
+
+        @WNDENUMPROC
+        def collect(window_handle: wintypes.HWND, _lparam: wintypes.LPARAM) -> bool:
+            if not self._user32.IsWindowVisible(window_handle):
+                return True
+            if self._user32.GetWindow(window_handle, GW_OWNER):
+                return True
+            extended_style = int(self._user32.GetWindowLongW(window_handle, GWL_EXSTYLE))
+            if extended_style & WS_EX_TOOLWINDOW:
+                return True
+
+            title_length = int(self._user32.GetWindowTextLengthW(window_handle))
+            if title_length <= 0:
+                return True
+            title_buffer = ctypes.create_unicode_buffer(title_length + 1)
+            if self._user32.GetWindowTextW(window_handle, title_buffer, len(title_buffer)) <= 0:
+                return True
+
+            pid = wintypes.DWORD()
+            self._user32.GetWindowThreadProcessId(window_handle, ctypes.byref(pid))
+            if pid.value:
+                windows.append(
+                    AppWindowInfo(
+                        handle=int(window_handle),
+                        pid=int(pid.value),
+                        title=title_buffer.value.strip(),
+                    )
+                )
+            return True
+
+        ctypes.set_last_error(0)
+        if not self._user32.EnumWindows(collect, 0):
+            error_code = ctypes.get_last_error()
+            if error_code:
+                raise WindowsApiError("读取桌面程序窗口", error_code)
+        return tuple(windows)
+
+    def get_foreground_process_id(self) -> int:
+        window_handle = self._user32.GetForegroundWindow()
+        if not window_handle:
+            return 0
+        pid = wintypes.DWORD()
+        self._user32.GetWindowThreadProcessId(window_handle, ctypes.byref(pid))
+        return int(pid.value)
+
+    def post_close_window(self, window_handle: int) -> None:
+        if not self._user32.PostMessageW(window_handle, WM_CLOSE, 0, 0):
+            raise WindowsApiError(f"请求关闭窗口 {window_handle}")
 
     def _query_process_path_by_pid(self, pid: int) -> str:
         handle = self._kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)

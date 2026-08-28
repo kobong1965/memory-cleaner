@@ -74,3 +74,23 @@
   - Acceptance: The two-second background sample never enters the cleanup busy state; changed rows update in place while reorder, insertion, and removal use incremental model signals without resetting the entire process model.
   - Verify: Model signal tests prove value, reorder, insertion, and removal refreshes emit no model reset; live controller probes show zero busy-state transitions across repeated automatic refreshes.
   - Files: `src/memory_pilot/ui/qt_bridge.py`, `src/memory_pilot/ui/qml/Main.qml`, `tests/test_qt_bridge.py`, `SPEC.md`, `VERIFICATION.md`
+
+- [x] Task 16: Add safe inactive-application tracking and deep-clean planning
+  - Acceptance: Visible app PIDs start from a safe current-time baseline; foreground use refreshes their timestamp; candidates honor the 0–60 minute threshold and all process/window protections.
+  - Verify: Unit tests cover timing boundaries, foreground updates, protected classifications, and unknown-history behavior.
+  - Files: `src/memory_pilot/models.py`, `src/memory_pilot/core/deep_clean.py`, `src/memory_pilot/platform/windows_api.py`, `tests/test_deep_clean.py`, `tests/test_windows_api.py`
+
+- [x] Task 17: Add revalidated graceful-close execution and local settings
+  - Acceptance: Execution rechecks current foreground/use state and only posts `WM_CLOSE`; the selected minute value persists as a clamped local JSON setting.
+  - Verify: Fake-API tests prove no force-termination path exists, reactivated apps are skipped, failed posts are reported, and invalid setting files fall back safely.
+  - Files: `src/memory_pilot/core/deep_clean.py`, `src/memory_pilot/core/settings.py`, `tests/test_deep_clean.py`, `tests/test_settings.py`
+
+- [x] Task 18: Add the mini-widget deep-clean button and confirmation panel
+  - Acceptance: The requested gap contains a compact “深度清理” button; an accessible panel previews candidate count/names, edits 0–60 minutes, and requires explicit confirmation without resizing the widget.
+  - Verify: QML loads without errors; keyboard controls and `Ctrl+D` work; screenshots confirm no clipping, overlap, or refresh flicker.
+  - Files: `src/memory_pilot/ui/qt_bridge.py`, `src/memory_pilot/ui/qml/Mini.qml`, `tests/test_qt_bridge.py`, `VERIFICATION.md`
+
+- [x] Task 19: Package and verify Memory Pilot 0.2.5 in place
+  - Acceptance: Both EXEs are rebuilt as 0.2.5, both desktop shortcuts remain unchanged, the mini stays single-instance/topmost/tool-window, and no GitHub upload occurs without a new explicit request.
+  - Verify: Full automated suite, source and packaged QML smoke, controlled close probe, screenshot review, hashes, native style probe, and shortcut target checks pass.
+  - Files: `pyproject.toml`, `src/memory_pilot/__init__.py`, `packaging/app.manifest`, `README.md`, `VERIFICATION.md`, `tasks/todo.md`

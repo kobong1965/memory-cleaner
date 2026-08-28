@@ -120,3 +120,65 @@ class MemoryReleaseResult:
     @property
     def failed_count(self) -> int:
         return sum(item.status == ReleaseStatus.FAILED for item in self.items)
+
+
+@dataclass(frozen=True, slots=True)
+class AppWindowInfo:
+    handle: int
+    pid: int
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeepCleanCandidate:
+    pid: int
+    name: str
+    executable_path: str
+    idle_seconds: float
+    windows: tuple[AppWindowInfo, ...]
+
+    @property
+    def idle_minutes(self) -> int:
+        return max(0, int(self.idle_seconds // 60))
+
+
+@dataclass(frozen=True, slots=True)
+class DeepCleanPlan:
+    threshold_minutes: int
+    created_at: float
+    candidates: tuple[DeepCleanCandidate, ...] = field(default_factory=tuple)
+
+    @property
+    def candidate_names(self) -> tuple[str, ...]:
+        return tuple(candidate.name for candidate in self.candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class DeepCleanItemResult:
+    pid: int
+    name: str
+    requested_window_count: int
+    failed_window_count: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeepCleanResult:
+    threshold_minutes: int
+    preview_count: int
+    items: tuple[DeepCleanItemResult, ...] = field(default_factory=tuple)
+
+    @property
+    def requested_count(self) -> int:
+        return sum(item.requested_window_count > 0 for item in self.items)
+
+    @property
+    def skipped_count(self) -> int:
+        return sum(
+            item.requested_window_count == 0 and item.failed_window_count == 0
+            for item in self.items
+        )
+
+    @property
+    def failed_count(self) -> int:
+        return sum(item.failed_window_count > 0 for item in self.items)

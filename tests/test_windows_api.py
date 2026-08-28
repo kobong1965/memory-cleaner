@@ -31,6 +31,17 @@ class WindowsApiTests(unittest.TestCase):
     def test_current_process_is_elevated_returns_boolean(self) -> None:
         self.assertIsInstance(self.api.is_current_process_elevated(), bool)
 
+    def test_reads_foreground_pid_and_visible_application_windows(self) -> None:
+        foreground_pid = self.api.get_foreground_process_id()
+        windows = self.api.get_visible_app_windows()
+
+        self.assertGreaterEqual(foreground_pid, 0)
+        self.assertIsInstance(windows, tuple)
+        for window in windows:
+            self.assertGreater(window.handle, 0)
+            self.assertGreater(window.pid, 0)
+            self.assertTrue(window.title)
+
 
 if __name__ == "__main__":
     unittest.main()
