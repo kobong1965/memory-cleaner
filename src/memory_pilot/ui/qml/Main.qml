@@ -183,7 +183,7 @@ ApplicationWindow {
 
                 Text {
                     Layout.topMargin: 14
-                    text: "Memory Pilot  0.2.5"
+                    text: "Memory Pilot  0.2.6"
                     color: "#526681"
                     font.family: "Segoe UI Variable Text"
                     font.pixelSize: 9
@@ -223,6 +223,59 @@ ApplicationWindow {
                             color: window.muted
                             font.family: "Microsoft YaHei UI"
                             font.pixelSize: 11
+                        }
+                    }
+
+                    Button {
+                        id: miniModeButton
+                        Layout.preferredWidth: 150
+                        Layout.preferredHeight: 32
+                        enabled: !controller.miniModePending
+                        onClicked: controller.setMiniModeEnabled(!controller.miniModeEnabled)
+                        Accessible.name: "迷你悬浮窗开关"
+                        Accessible.description: controller.miniModeEnabled ? "当前已打开" : "当前已关闭"
+                        Accessible.role: Accessible.CheckBox
+                        Accessible.checked: controller.miniModeEnabled
+
+                        contentItem: Row {
+                            spacing: 9
+                            anchors.centerIn: parent
+
+                            Text {
+                                text: controller.miniModeText
+                                color: controller.miniModeEnabled ? "#175FA9" : window.muted
+                                font.family: "Microsoft YaHei UI"
+                                font.pixelSize: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            Rectangle {
+                                width: 30
+                                height: 17
+                                radius: 9
+                                color: controller.miniModeEnabled ? "#2787F5" : "#C9D3DF"
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Rectangle {
+                                    width: 13
+                                    height: 13
+                                    radius: 7
+                                    x: controller.miniModeEnabled ? 15 : 2
+                                    y: 2
+                                    color: "#FFFFFF"
+                                    Behavior on x {
+                                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                                    }
+                                }
+                            }
+                        }
+
+                        background: Rectangle {
+                            radius: 16
+                            color: miniModeButton.hovered ? "#FFFFFF" : "#F9FBFD"
+                            border.width: 1
+                            border.color: controller.miniModeEnabled ? "#9EC6F5" : window.line
+                            opacity: miniModeButton.enabled ? 1.0 : 0.72
                         }
                     }
 
@@ -708,6 +761,7 @@ ApplicationWindow {
     }
 
     Shortcut { sequence: "Ctrl+F"; onActivated: searchField.forceActiveFocus() }
+    Shortcut { sequence: "Ctrl+M"; onActivated: controller.setMiniModeEnabled(!controller.miniModeEnabled) }
     Shortcut { sequence: "F5"; onActivated: controller.refresh() }
     Shortcut { sequence: "Ctrl+L"; onActivated: controller.releaseMemory() }
 }

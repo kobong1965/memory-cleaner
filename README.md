@@ -4,7 +4,7 @@ Memory Pilot 是一个使用 PySide6 + Qt Quick/QML 构建的 Windows 进程监�
 
 ## 下载
 
-普通用户请从 GitHub Releases 下载 `MemoryPilot.exe`（完整版）或 `MemoryPilotMini.exe`（右上角悬浮版）。两个 EXE 均已包含 Python 与 Qt Quick 运行组件，无需另外安装开发环境。
+普通用户只需从 GitHub Releases 下载 `MemoryPilot.exe`。主界面和右上角迷你悬浮窗是同一个程序；主界面内可直接开关悬浮窗，也可用 `MemoryPilot.exe --mini` 快速进入。EXE 已包含 Python 与 Qt Quick 运行组件，无需另外安装开发环境。
 
 ## 功能
 
@@ -15,6 +15,7 @@ Memory Pilot 是一个使用 PySide6 + Qt Quick/QML 构建的 Windows 进程监�
 - 一键安全修剪可访问用户进程的闲置工作集。
 - 可按 0–60 分钟前台闲置时间预览普通桌面程序，经确认后发送正常关闭请求。
 - 提供无标题栏、无任务栏按钮的右上角半透明液态玻璃悬浮版。
+- 完整版顶部内置“迷你悬浮窗”开关，同一个 `MemoryPilot.exe` 负责两种界面。
 - 自动保护 Windows 关键进程、本程序、访问受限进程和低占用进程。
 - 完全离线，无遥测，无默认开机自启。
 
@@ -36,10 +37,11 @@ Memory Pilot 是一个使用 PySide6 + Qt Quick/QML 构建的 Windows 进程监�
 - `F5`：立即刷新。
 - `Ctrl+L`：安全释放内存。
 - `Ctrl+D`：打开深度清理设置与预览。
+- `Ctrl+M`：打开或关闭迷你悬浮窗。
 
 ## 迷你悬浮版
 
-- 桌面快捷方式：`Memory Pilot 迷你悬浮版`。
+- 完整版顶部可直接开关；桌面快捷方式 `Memory Pilot 迷你悬浮版` 也会调用同一个 `MemoryPilot.exe --mini`。
 - 默认位于主屏幕工作区右上角，尺寸 286×158，并保持置顶。
 - 悬浮卡片不显示 Logo，使用霜白到冰蓝的半透明渐变、Qt Quick 矢量圆角、Windows DWM 圆角和液态内存进度条。
 - 显示实时内存使用率、可用内存、“深度清理”和“释放内存”按钮。
@@ -86,9 +88,9 @@ Memory Pilot 自身采用 MIT 许可证。
 
 ## 当前构建
 
-- 版本：`0.2.5`
+- 版本：`0.2.6`
 - 完整版：`dist\MemoryPilot.exe`
-- 完整版 SHA-256：`50CA0C33A53E492B56F019B2B11FCEE0A903A33A82395C471070A0FBAD09B21A`
-- 迷你版：`dist\MemoryPilotMini.exe`
-- 迷你版 SHA-256：`22CE5052D39B56244D9D9D5C19683F0F4E8DC0DAE9EBA67E0A80CBCF60AC9AFF`
+- 完整版 SHA-256：`3E1D86CB34A201A0F408AC0156E1402479E35FBC8D214A38DBF0715524BEA889`
+- 旧入口兼容文件：`dist\MemoryPilotMini.exe`
+- 兼容文件 SHA-256：`6F66199B1D718E7C258E9F0BFA68E810672490D70252782DE76118DE44B2848E`
 - 图标：`assets\memory-pilot-logo.png`

@@ -11,9 +11,11 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from memory_pilot.ui.qt_bridge import DashboardController, MiniController
+from memory_pilot.ui.mini_mode import MINI_MUTEX_NAME, MINI_STOP_EVENT_NAME
 from memory_pilot.ui.resources import resource_path
 from memory_pilot.ui.windowing import (
     NamedMutex,
+    NamedEvent,
     apply_native_rounded_corners,
     apply_tool_window_style,
     primary_work_area,
@@ -75,11 +77,13 @@ def run_dashboard() -> None:
 
 
 def run_mini_widget() -> None:
-    mutex = NamedMutex("Local\\MemoryPilotMini.Singleton")
+    mutex = NamedMutex(MINI_MUTEX_NAME)
     if not mutex.acquire():
         return
     try:
         app = _create_app("Memory Pilot 迷你悬浮版")
+        stop_event = NamedEvent(MINI_STOP_EVENT_NAME)
+        stop_event.create()
         controller = MiniController(app)
         engine = _load_engine("Mini.qml", controller=controller)
         window = engine.rootObjects()[0]
@@ -88,6 +92,12 @@ def run_mini_widget() -> None:
         controller.quitRequested.connect(app.quit)
         app.aboutToQuit.connect(controller.shutdown)
         app.aboutToQuit.connect(mutex.close)
+        app.aboutToQuit.connect(stop_event.close)
+
+        stop_timer = QTimer(app)
+        stop_timer.setInterval(250)
+        stop_timer.timeout.connect(lambda: app.quit() if stop_event.is_set() else None)
+        stop_timer.start()
 
         def apply_window_style() -> None:
             handle, _style = apply_tool_window_style(int(window.winId()))

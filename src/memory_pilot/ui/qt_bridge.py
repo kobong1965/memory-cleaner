@@ -5,6 +5,7 @@ import datetime as dt
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Callable, Sequence
 
 from PySide6.QtCore import (
@@ -32,8 +33,10 @@ from memory_pilot.models import (
     ProcessView,
 )
 from memory_pilot.platform.windows_api import WindowsApi
+from memory_pilot.ui.mini_mode import MiniModeManager
 
 REFRESH_INTERVAL_MS = 2_000
+MINI_TRANSITION_TIMEOUT_SECONDS = 15.0
 
 
 def format_gb(byte_count: int) -> str:
@@ -211,13 +214,21 @@ class DashboardController(QObject):
     groupedChanged = Signal()
     tableStateChanged = Signal()
     noticeChanged = Signal()
+    miniModeStateChanged = Signal()
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        parent: QObject | None = None,
+        mini_mode_manager: MiniModeManager | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         super().__init__(parent)
         self.api = WindowsApi()
         self.monitor = ProcessMonitor(self.api)
         self.release_service = MemoryReleaseService(self.api)
         self.process_model = ProcessListModel(self)
+        self._mini_mode_manager = mini_mode_manager or MiniModeManager()
+        self._clock = clock
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-pilot-qt")
         self._future: concurrent.futures.Future[object] | None = None
         self._future_kind = ""
@@ -238,6 +249,10 @@ class DashboardController(QObject):
         self._notice_visible = False
         self._notice_title = ""
         self._notice_body = ""
+        self._mini_mode_enabled = self._read_mini_mode_state()
+        self._mini_mode_pending = False
+        self._mini_mode_desired: bool | None = None
+        self._mini_mode_deadline = 0.0
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(40)
@@ -246,6 +261,10 @@ class DashboardController(QObject):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(REFRESH_INTERVAL_MS)
         self._refresh_timer.timeout.connect(self.refresh)
+        self._mini_mode_timer = QTimer(self)
+        self._mini_mode_timer.setInterval(500)
+        self._mini_mode_timer.timeout.connect(self._sync_mini_mode_state)
+        self._mini_mode_timer.start()
 
     @Property(str, notify=usageTextChanged)
     def usageText(self) -> str:
@@ -311,6 +330,20 @@ class DashboardController(QObject):
     def noticeBody(self) -> str:
         return self._notice_body
 
+    @Property(bool, notify=miniModeStateChanged)
+    def miniModeEnabled(self) -> bool:
+        return self._mini_mode_enabled
+
+    @Property(bool, notify=miniModeStateChanged)
+    def miniModePending(self) -> bool:
+        return self._mini_mode_pending
+
+    @Property(str, notify=miniModeStateChanged)
+    def miniModeText(self) -> str:
+        if self._mini_mode_pending:
+            return "正在打开…" if self._mini_mode_enabled else "正在关闭…"
+        return "悬浮窗已开" if self._mini_mode_enabled else "迷你悬浮窗"
+
     @Slot()
     def refresh(self) -> None:
         if self._closed:
@@ -363,6 +396,33 @@ class DashboardController(QObject):
             visible_busy=True,
         )
 
+    @Slot(bool)
+    def setMiniModeEnabled(self, enabled: bool) -> None:
+        if self._closed or self._mini_mode_pending:
+            return
+        desired = bool(enabled)
+        actual = self._read_mini_mode_state()
+        if desired == actual:
+            self._set_mini_mode_state(actual, False)
+            return
+
+        self._mini_mode_desired = desired
+        self._mini_mode_deadline = self._clock() + MINI_TRANSITION_TIMEOUT_SECONDS
+        self._set_mini_mode_state(desired, True)
+        try:
+            if desired:
+                self._mini_mode_manager.start()
+                self._set_status("正在打开迷你悬浮窗…")
+            else:
+                self._mini_mode_manager.request_stop()
+                self._set_status("正在关闭迷你悬浮窗…")
+        except (OSError, RuntimeError) as exc:
+            self._mini_mode_desired = None
+            actual = self._read_mini_mode_state()
+            self._set_mini_mode_state(actual, False)
+            self._set_status(f"迷你悬浮窗操作失败：{exc}")
+        QTimer.singleShot(100, self._sync_mini_mode_state)
+
     @Slot()
     def dismissNotice(self) -> None:
         if not self._notice_visible:
@@ -376,6 +436,7 @@ class DashboardController(QObject):
             return
         self._closed = True
         self._refresh_timer.stop()
+        self._mini_mode_timer.stop()
         self._poll_timer.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
@@ -477,6 +538,44 @@ class DashboardController(QObject):
         self._notice_body = body
         self._notice_visible = True
         self.noticeChanged.emit()
+
+    @Slot()
+    def _sync_mini_mode_state(self) -> None:
+        if self._closed:
+            return
+        actual = self._read_mini_mode_state()
+        desired = self._mini_mode_desired
+        if desired is None:
+            self._set_mini_mode_state(actual, False)
+            return
+        if actual == desired:
+            self._mini_mode_desired = None
+            self._set_mini_mode_state(actual, False)
+            self._set_status("迷你悬浮窗已打开" if actual else "迷你悬浮窗已关闭")
+            return
+        if self._clock() >= self._mini_mode_deadline:
+            self._mini_mode_desired = None
+            self._set_mini_mode_state(actual, False)
+            self._set_status("迷你悬浮窗启动或退出超时，请重试。")
+            return
+        if not desired and actual:
+            try:
+                self._mini_mode_manager.request_stop()
+            except OSError:
+                pass
+
+    def _read_mini_mode_state(self) -> bool:
+        try:
+            return self._mini_mode_manager.is_running()
+        except OSError:
+            return False
+
+    def _set_mini_mode_state(self, enabled: bool, pending: bool) -> None:
+        if enabled == self._mini_mode_enabled and pending == self._mini_mode_pending:
+            return
+        self._mini_mode_enabled = enabled
+        self._mini_mode_pending = pending
+        self.miniModeStateChanged.emit()
 
     def _schedule_refresh(self) -> None:
         if not self._closed:

@@ -94,3 +94,18 @@
   - Acceptance: Both EXEs are rebuilt as 0.2.5, both desktop shortcuts remain unchanged, the mini stays single-instance/topmost/tool-window, and no GitHub upload occurs without a new explicit request.
   - Verify: Full automated suite, source and packaged QML smoke, controlled close probe, screenshot review, hashes, native style probe, and shortcut target checks pass.
   - Files: `pyproject.toml`, `src/memory_pilot/__init__.py`, `packaging/app.manifest`, `README.md`, `VERIFICATION.md`, `tasks/todo.md`
+
+- [x] Task 20: Add same-EXE mini mode and graceful IPC
+  - Acceptance: `MemoryPilot.exe --mini` starts the existing singleton widget; a named event requests normal exit; running state is readable without process enumeration.
+  - Verify: Unit tests cover mutex/event state and launch command; a live same-EXE probe opens and closes the mini without force termination.
+  - Files: `src/memory_pilot/__main__.py`, `src/memory_pilot/ui/windowing.py`, `src/memory_pilot/ui/mini_mode.py`, `src/memory_pilot/ui/qt_runtime.py`, `tests/test_windowing.py`, `tests/test_mini_mode.py`
+
+- [x] Task 21: Add dashboard mini-mode switch
+  - Acceptance: The header switch opens/closes mini mode, disables during transition, reports actual state, and automatically turns off after the mini exits independently.
+  - Verify: Controller tests cover transition success, timeout, and external exit; QML smoke and screenshot confirm keyboard access, text labels, and layout stability.
+  - Files: `src/memory_pilot/ui/qt_bridge.py`, `src/memory_pilot/ui/qml/Main.qml`, `tests/test_qt_bridge.py`, `VERIFICATION.md`
+
+- [x] Task 22: Package and verify unified Memory Pilot 0.2.6
+  - Acceptance: Main shortcut remains unchanged; mini shortcut targets `MemoryPilot.exe --mini`; both modes run from the main EXE and existing settings remain intact.
+  - Verify: Full suite, builds, same-EXE switch probe, shortcut inspection, native mini styles, single-instance check, hashes, and screenshots pass.
+  - Files: `pyproject.toml`, `src/memory_pilot/__init__.py`, `packaging/app.manifest`, `README.md`, `VERIFICATION.md`, `tasks/todo.md`

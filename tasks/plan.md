@@ -82,6 +82,22 @@ The UI owns presentation state only. Core services use immutable models and depe
 - **Zero-minute scope:** show candidate count/names and require a second explicit confirmation.
 - **Stale PID reuse:** retain only currently visible PIDs and rebuild candidates from a fresh process/window snapshot.
 
+## Unified Mini Mode Extension
+
+1. Make `MemoryPilot.exe` dispatch `--mini` to the existing QML mini runtime while keeping the default dashboard path unchanged.
+2. Add named-event IPC beside the existing singleton mutex so the dashboard can request a graceful mini shutdown and read actual running state.
+3. Add a small mini-mode manager and dashboard state machine for start, stop, transition timeout, and external-exit reconciliation.
+4. Place an accessible “迷你悬浮窗” switch in the dashboard header using the existing neutral-blue design language.
+5. Keep the legacy mini shortcut but retarget it to `MemoryPilot.exe --mini`; retain `MemoryPilotMini.exe` for one compatibility release only.
+6. Bump to 0.2.6, rebuild in place, verify one-EXE start/stop, shortcuts, QML, and existing mini window behavior; do not publish GitHub automatically.
+
+### Unified Mini Mode Risks
+
+- **Start/stop race:** maintain a desired state with a bounded transition window and reconcile against the named mutex.
+- **Force termination:** use a named event consumed by the mini Qt process; never call `TerminateProcess` or `Stop-Process` from product code.
+- **Stale switch state:** poll the mutex and update the switch when the mini exits from its own menu.
+- **Broken legacy entry:** preserve the desktop shortcut name while changing only target arguments to the unified executable.
+
 ## Mini Widget Extension
 
 1. Add testable work-area positioning helpers and Windows tool-window style handling.
